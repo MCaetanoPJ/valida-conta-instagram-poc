@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Net;
 using System.Text.Json;
 
 namespace valida_conta_instagram_poc.Controllers
@@ -7,7 +8,13 @@ namespace valida_conta_instagram_poc.Controllers
     [Route("api/[controller]")]
     public class InstagramCheckController : ControllerBase
     {
-        private static readonly HttpClient client = new HttpClient();
+        private readonly IHttpClientFactory _httpClientFactory;
+
+        // Injetamos o IHttpClientFactory no construtor
+        public InstagramCheckController(IHttpClientFactory httpClientFactory)
+        {
+            _httpClientFactory = httpClientFactory;
+        }
 
         [HttpGet("{username}")]
         public async Task<IActionResult> CheckProfile(string username)
@@ -15,52 +22,29 @@ namespace valida_conta_instagram_poc.Controllers
             const string userAgent = "Instagram 361.0.0.0.84 Android (28/9; 480dpi; 1080x1920; samsung; SM-G930F; herolte; samsungexynos8890; en_US; 673256705)";
             var url = $"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}";
 
-            client.DefaultRequestHeaders.Clear();
-            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", userAgent);
-
             try
             {
-                var response = await client.GetAsync(url);
+                // Criamos um cliente HTTP a partir da factory para cada requisição
+                var client = _httpClientFactory.CreateClient();
 
-                // Se a resposta da API já for um erro (como 404 Not Found), consideramos que não existe.
-                if (!response.IsSuccessStatusCode)
-                {
-                    return NotFound(new { status = "nao_existe", motivo = $"API do Instagram retornou o erro {(int)response.StatusCode}." });
-                }
+                using var requestMessage = new HttpRequestMessage(HttpMethod.Get, url);
+                requestMessage.Headers.TryAddWithoutValidation("User-Agent", userAgent);
 
+                var response = await client.SendAsync(requestMessage);
                 var content = await response.Content.ReadAsStringAsync();
 
-                // --- NOVA VALIDAÇÃO DE CONTEÚDO ---
-                try
+                if (!response.IsSuccessStatusCode)
                 {
-                    using JsonDocument doc = JsonDocument.Parse(content);
-                    JsonElement root = doc.RootElement;
+                    return StatusCode((int)response.StatusCode, new { Error = content });
+                }
 
-                    // A resposta esperada tem a estrutura: { "data": { "user": { "username": "..." } } }
-                    if (root.TryGetProperty("data", out JsonElement dataElement) &&
-                        dataElement.TryGetProperty("user", out JsonElement userElement) &&
-                        userElement.TryGetProperty("username", out JsonElement usernameElement))
-                    {
-                        // Se encontramos o campo username, a conta existe.
-                        string foundUsername = usernameElement.GetString() ?? string.Empty;
-                        return Ok(new { status = "existe", username = foundUsername });
-                    }
-                    else
-                    {
-                        // O JSON é válido, mas não tem a estrutura ou o campo que esperamos.
-                        return NotFound(new { status = "nao_existe", motivo = "A resposta JSON não continha o campo 'username' esperado." });
-                    }
-                }
-                catch (JsonException)
-                {
-                    // Se o conteúdo da resposta não for um JSON válido, consideramos que não existe.
-                    return NotFound(new { status = "nao_existe", motivo = "A resposta do Instagram não foi um JSON válido." });
-                }
-                // --- FIM DA NOVA VALIDAÇÃO ---
+                return Ok(JsonDocument.Parse(content));
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { status = "erro", motivo = "Ocorreu um erro interno na API.", detalhes = ex.Message });
+                // Este log de erro agora DEVE aparecer no Coolify se algo falhar
+                Console.WriteLine($"ERRO CRÍTICO: {ex.ToString()}");
+                return StatusCode(500, new { Error = "Ocorreu um erro interno crítico.", Details = ex.Message });
             }
         }
     }
