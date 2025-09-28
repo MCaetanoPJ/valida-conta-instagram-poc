@@ -1,0 +1,6 @@
+@valida_conta_instagram_poc_HostAddress = http://localhost:5113
+
+GET {{valida_conta_instagram_poc_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
